@@ -112,6 +112,7 @@ def save_to_csv(products, filename='products.csv'):
     except Exception as e:
         print(f"Ошибка при сохранении в CSV: {e}")
 
+
 if __name__ == "__main__":
     url = 'https://www.aveopt.com.ua/all-products/'
     products = parse_website(url)
