@@ -7,6 +7,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import time
+from image_downloader import ImageDownloader
+
 
 def scroll_page(driver, wait_time=2):
     last_height = driver.execute_script("return document.body.scrollHeight")
@@ -30,53 +32,50 @@ def scroll_page(driver, wait_time=2):
 
 def parse_website(url):
     try:
-        print(f"Начинаю парсинг сайта: {url}")
-        
+        # Инициализация браузера
         chrome_options = Options()
         chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--window-size=1920,1080')
         
-        print("Инициализация браузера...")
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
         all_products = []
-        page = 1
+        page = 73  # Можно сделать параметром
+        max_pages = 74  # Можно сделать параметром
         
-        while True:
-            current_url = f"{url}page/{page}/" if page > 1 else url
+        for page in range(page, max_pages + 1):
+            current_url = f"{url}?product-page={page}"
             print(f"\nОбработка страницы {page}: {current_url}")
             
+            driver.delete_all_cookies()
             driver.get(current_url)
-            time.sleep(5)
             
-            # Прокручиваем страницу
-            scroll_page(driver)
+            # Ждем загрузки товаров
+            WebDriverWait(driver, 40).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, '.product')))
             
-            # Ищем товары на текущей странице
-            products_elements = driver.find_elements(By.CSS_SELECTOR, '.product, .type-product, article.product')
+            products_container = driver.find_element(By.CSS_SELECTOR, '.products')
+            products_elements = products_container.find_elements(By.CSS_SELECTOR, '.product')
             
-            if not products_elements:
-                print(f"Товары не найдены на странице {page}. Завершаем парсинг.")
-                break
-                
-            print(f"Найдено товаров на странице {page}: {len(products_elements)}")
+            if len(products_elements) > 40 and page != max_pages:
+                products_elements = products_elements[:40]
             
-            for product in products_elements:
+            for i, product in enumerate(products_elements):
                 try:
-                    name = product.find_element(By.CSS_SELECTOR, '.woocommerce-loop-product__title, h2.woocommerce-loop-product__title').text
-                    price = product.find_element(By.CSS_SELECTOR, '.price, .woocommerce-Price-amount').text
-                    link = product.find_element(By.CSS_SELECTOR, 'a.woocommerce-LoopProduct-link').get_attribute('href')
-                    img = product.find_element(By.CSS_SELECTOR, 'img').get_attribute('src')
+                    name = product.find_element(By.CSS_SELECTOR, '.woocommerce-loop-product__title').text
                     
-                    if name:
+                    if name == "Нет в наличии":
+                        print("Найден флаг конца каталога.")
+                        driver.quit()
+                        return process_images(all_products)
+                    
+                    if "В наявності" in product.text:
                         product_data = {
                             'название': name,
-                            'цена': price,
-                            'ссылка': link,
-                            'фото': img
+                            'цена': product.find_element(By.CSS_SELECTOR, '.price').text,
+                            'ссылка': product.find_element(By.CSS_SELECTOR, 'a.woocommerce-LoopProduct-link').get_attribute('href'),
+                            'фото': product.find_element(By.CSS_SELECTOR, 'img').get_attribute('src')
                         }
                         all_products.append(product_data)
                         print(f"Обработан товар: {name}")
@@ -84,28 +83,9 @@ def parse_website(url):
                 except Exception as e:
                     print(f"Ошибка при обработке товара: {str(e)}")
                     continue
-            
-            # Проверяем наличие следующей страницы
-            try:
-                next_page = driver.find_element(By.CSS_SELECTOR, '.pagination li.active').find_element(By.XPATH, 'following-sibling::li')
-                if not next_page:
-                    print("Достигнут конец пагинации")
-                    break
-            except:
-                print("Пагинация не найдена или достигнут конец")
-                break
-                
-            page += 1
         
         driver.quit()
-        print(f"\nВсего собрано товаров: {len(all_products)}")
-        
-        # Добавляем скачивание изображений
-        from image_downloader import ImageDownloader
-        downloader = ImageDownloader()
-        all_products = downloader.process_products(all_products)
-        
-        return all_products
+        return process_images(all_products)
         
     except Exception as e:
         print(f"Ошибка при парсинге: {str(e)}")
@@ -113,19 +93,27 @@ def parse_website(url):
             driver.quit()
         return None
 
+def process_images(products):
+    """Вынесли обработку изображений в отдельную функцию"""
+    if not products:
+        return None
+    downloader = ImageDownloader()
+    return downloader.process_products(products)
+
 def save_to_csv(products, filename='products.csv'):
+    if not products:
+        print("Нет данных для сохранения")
+        return
+        
     try:
         df = pd.DataFrame(products)
         df.to_csv(filename, index=False, encoding='utf-8-sig')
-        print(f"Данные сохранены в файл: {filename}")
-        print(f"Всего сохранено товаров: {len(products)}")
+        print(f"Сохранено {len(products)} товаров в {filename}")
     except Exception as e:
         print(f"Ошибка при сохранении в CSV: {e}")
 
 if __name__ == "__main__":
     url = 'https://www.aveopt.com.ua/all-products/'
-    print("Начало работы программы")
     products = parse_website(url)
     if products:
         save_to_csv(products)
-    print("Программа завершена")
